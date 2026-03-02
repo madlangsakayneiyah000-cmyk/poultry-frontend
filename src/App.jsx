@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 
-// ⚙️ BACKEND URL - Your Render backend
+// ÃƒÂ¢Ã…Â¡Ã¢â€žÂ¢ÃƒÂ¯Ã‚Â¸Ã‚Â BACKEND URL - Your Render backend
 const BACKEND_URL = "https://poultry-backend-pwpf.onrender.com";
 
 // ===== DYNAMIC STATUS HELPERS =====
@@ -71,11 +71,14 @@ function App() {
 
   // Actuator states
   const [lightsState, setLightsState] = useState("OFF");
-  const [fanState, setFanState] = useState("OFF");
+  const [lightMode, setLightMode] = useState("AUTO"); // "AUTO", "FORCE_ON", "FORCE_OFF"
+  const [fanState, setFanState] = useState("OFF");    // single ventilation fan
   const [washerRunning, setWasherRunning] = useState(false);
   const [washerTime, setWasherTime] = useState(45);
 
+
   // ===== FETCH LATEST SENSOR DATA =====
+
 useEffect(() => {
   const fetchLatestSensor = async () => {
     try {
@@ -106,7 +109,13 @@ useEffect(() => {
       }
 
       // Update actuator states from sensor data
-      if (data.lightStatus) setLightsState(data.lightStatus);
+      if (data.lightStatus) {
+        // kapag AUTO lang, saka sundin ang MCU state
+        if (lightMode === "AUTO") {
+          setLightsState(data.lightStatus);
+        }
+      }
+
       if (data.pressureWasherStatus) {
         setWasherRunning(data.pressureWasherStatus === "ON");
       }
@@ -120,9 +129,10 @@ useEffect(() => {
 
   fetchLatestSensor();
 
-   const intervalId = setInterval(fetchLatestSensor, 30000);
+  // mas mabilis na refresh for \"live\" feeling
+  const intervalId = setInterval(fetchLatestSensor, 3000);
   return () => clearInterval(intervalId);
-}, []);
+}, [lightMode]);
 
 useEffect(() => {
   let interval;
@@ -167,31 +177,29 @@ useEffect(() => {
 // ===== CONTROL ACTUATORS (NEW, TWO-WAY) =====
 const sendControlCommand = async (target, state) => {
   try {
+    // Map frontend target/state -> backend device/mode
     let device = "";
     let mode = "";
     let timerDuration = undefined;
 
     if (target === "light") {
       device = "light";
-      // LIGHT:
-      // ON  => FORCE_ON  (manual ON override)
-      // OFF => AUTO      (balik sensor-based)
-      mode = state === "ON" ? "FORCE_ON" : "AUTO";
-
+      if (state === "AUTO") {
+        mode = "AUTO";
+      } else {
+        mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
+      }
     } else if (target === "fan") {
-      device = "fan_positive";
-      // FAN:
-      // ON  => AUTO       (balik normal automatic/laging naka-on logic)
-      // OFF => FORCE_OFF  (override patay)
-      mode = state === "ON" ? "AUTO" : "FORCE_OFF";
-
+      // unified ventilation fan
+      device = "fan";
+      mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
     } else if (target === "pressureWasher") {
       device = "pressure_washer";
       mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
+      // 45-second cycle tulad sa UI mo (pwede mong alisin kung gusto mong purely manual)
       if (state === "ON") {
         timerDuration = 45;
       }
-
     } else {
       throw new Error("Unknown target: " + target);
     }
@@ -216,10 +224,23 @@ const sendControlCommand = async (target, state) => {
     const result = await res.json();
     console.log("Control command sent:", result);
 
-  
     // Update local UI state (for instant feedback)
-    if (target === "light") setLightsState(state);
-    if (target === "fan") setFanState(state);
+    if (target === "light") {
+      if (state === "AUTO") {
+        setLightMode("AUTO");
+      } else if (state === "ON") {
+        setLightMode("FORCE_ON");
+        setLightsState("ON");
+      } else if (state === "OFF") {
+        setLightMode("FORCE_OFF");
+        setLightsState("OFF");
+      }
+    }
+
+    if (target === "fan") {
+      setFanState(state);
+    }
+
     if (target === "pressureWasher") {
       setWasherRunning(state === "ON");
       if (state === "ON") setWasherTime(45);
@@ -229,7 +250,6 @@ const sendControlCommand = async (target, state) => {
     alert("Failed to send command: " + err.message);
   }
 };
-
 
 
   // ===== PRESSURE WASHER TIMER =====
@@ -324,7 +344,7 @@ const sendControlCommand = async (target, state) => {
               marginRight: 12,
             }}
           >
-            🐔
+            ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬Â
           </div>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>
@@ -336,31 +356,31 @@ const sendControlCommand = async (target, state) => {
 
         <nav style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <SidebarButton
-            icon="📊"
+            icon="ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã… "
             label="Dashboard"
             active={activePage === "dashboard"}
             onClick={() => showPage("dashboard")}
           />
           <SidebarButton
-            icon="📋"
+            icon="ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Â¹"
             label="Batch Planning"
             active={activePage === "batch"}
             onClick={() => showPage("batch")}
           />
           <SidebarButton
-            icon="⚠️"
+            icon="ÃƒÂ¢Ã…Â¡ ÃƒÂ¯Ã‚Â¸Ã‚Â"
             label="Early Warnings"
             active={activePage === "alerts"}
             onClick={() => showPage("alerts")}
           />
           <SidebarButton
-            icon="👤"
+            icon="ÃƒÂ°Ã…Â¸Ã¢â‚¬ËœÃ‚Â¤"
             label="Farmer Profile"
             active={activePage === "profile"}
             onClick={() => showPage("profile")}
           />
           <SidebarButton
-            icon="⚙️"
+            icon="ÃƒÂ¢Ã…Â¡Ã¢â€žÂ¢ÃƒÂ¯Ã‚Â¸Ã‚Â"
             label="Settings"
             active={activePage === "settings"}
             onClick={() => showPage("settings")}
@@ -419,7 +439,7 @@ const sendControlCommand = async (target, state) => {
                 }}
                 title={sidebarOpen ? "Close menu" : "Open menu"}
               >
-                {sidebarOpen ? "✕" : "☰"}
+                {sidebarOpen ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¢" : "ÃƒÂ¢Ã‹Å“Ã‚Â°"}
               </button>
             )}
             <div>
@@ -455,7 +475,7 @@ const sendControlCommand = async (target, state) => {
               whiteSpace: "nowrap",
             }}
           >
-            {sensorError ? "✗ System: Error" : sensorLoading ? "⏳ Loading..." : "✓ System: Normal"}
+            {sensorError ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ System: Error" : sensorLoading ? "ÃƒÂ¢Ã‚ÂÃ‚Â³ Loading..." : "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ System: Normal"}
           </div>
         </header>
 
@@ -484,7 +504,7 @@ const sendControlCommand = async (target, state) => {
         {/* CONTENT AREA */}
         <div style={{ padding: 24, maxWidth: 1400, margin: "0 auto" }}>
           {activePage === "dashboard" && (
-           <DashboardPage
+            <DashboardPage
   chartData={chartData}
   washerRunning={washerRunning}
   washerTime={washerTime}
@@ -492,6 +512,7 @@ const sendControlCommand = async (target, state) => {
   sensorLoading={sensorLoading}
   sensorError={sensorError}
   lightsState={lightsState}
+  lightMode={lightMode}
   fanState={fanState}
   sendControlCommand={sendControlCommand}
   lastUpdateAgeSeconds={lastUpdateAgeSeconds}
@@ -527,6 +548,7 @@ function DashboardPage({
   sensorLoading,
   sensorError,
   lightsState,
+  lightMode,
   fanState,
   sendControlCommand,
   lastUpdateAgeSeconds,
@@ -548,7 +570,7 @@ function DashboardPage({
           fontSize: 13,
           color: "#991b1b"
         }}>
-          ⚠️ Sensor error: {sensorError}
+          ÃƒÂ¢Ã…Â¡ ÃƒÂ¯Ã‚Â¸Ã‚Â Sensor error: {sensorError}
         </div>
       )}
 
@@ -562,7 +584,7 @@ function DashboardPage({
             color: "#111827",
           }}
         >
-          🌡️ Live Environment Parameters
+          ÃƒÂ°Ã…Â¸Ã…â€™Ã‚Â¡ÃƒÂ¯Ã‚Â¸Ã‚Â Live Environment Parameters
         </h2>
         <div
           style={{
@@ -572,16 +594,16 @@ function DashboardPage({
           }}
         >
       <ParamCard
-  icon="🌡️"
+  icon="ÃƒÂ°Ã…Â¸Ã…â€™Ã‚Â¡ÃƒÂ¯Ã‚Â¸Ã‚Â"
   title="Temperature"
   value={
     !latestSensor || isStale
-      ? "—"
+      ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
       : typeof latestSensor.temperature === "number"
-      ? `${latestSensor.temperature.toFixed(1)}°C`
+      ? `${latestSensor.temperature.toFixed(1)}Ãƒâ€šÃ‚Â°C`
       : sensorLoading
       ? "Loading..."
-      : "—"
+      : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
   }
   status={
     !latestSensor || isStale
@@ -594,20 +616,20 @@ function DashboardPage({
       : getTemperatureStatus(latestSensor?.temperature).color
   }
   bgColor="#e0f2fe"
-  note="Target: 24–26°C"
+  note="Target: 24ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“26Ãƒâ€šÃ‚Â°C"
 />
 
 <ParamCard
-  icon="💧"
+  icon="ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â§"
   title="Humidity"
   value={
     !latestSensor || isStale
-      ? "—"
+      ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
       : typeof latestSensor.humidity === "number"
       ? `${latestSensor.humidity.toFixed(0)}%`
       : sensorLoading
       ? "Loading..."
-      : "—"
+      : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
   }
   status={
     !latestSensor || isStale
@@ -620,21 +642,21 @@ function DashboardPage({
       : getHumidityStatus(latestSensor?.humidity).color
   }
   bgColor="#dcfce7"
-  note="Target: 60–80%"
+  note="Target: 60ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“80%"
 />
 
          
       <ParamCard
-  icon="☁️"
-  title="Ammonia (NH₃)"
+  icon="ÃƒÂ¢Ã‹Å“Ã‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â"
+  title="Ammonia (NHÃƒÂ¢Ã¢â‚¬Å¡Ã†â€™)"
   value={
     !latestSensor || isStale
-      ? "—"
+      ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
       : typeof latestSensor.ammonia === "number"
       ? `${latestSensor.ammonia.toFixed(1)} ppm`
       : sensorLoading
       ? "Loading..."
-      : "—"
+      : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
   }
   status={
     !latestSensor || isStale
@@ -647,19 +669,19 @@ function DashboardPage({
       : getAmmoniaStatus(latestSensor?.ammonia).color
   }
   bgColor="#fef3c7"
-  note="Optimal: 0–5 ppm"
+  note="Optimal: 0ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“5 ppm"
 />
     <ParamCard
-  icon="💨"
-  title="Methane (CH₄)"
+  icon="ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â¨"
+  title="Methane (CHÃƒÂ¢Ã¢â‚¬Å¡Ã¢â‚¬Å¾)"
   value={
     !latestSensor || isStale
-      ? "—"
+      ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
       : typeof latestSensor.methane === "number"
       ? `${latestSensor.methane.toFixed(1)} ppm`
       : sensorLoading
       ? "Loading..."
-      : "—"
+      : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
   }
   status={
     !latestSensor || isStale
@@ -672,21 +694,21 @@ function DashboardPage({
       : getMethaneStatus(latestSensor?.methane).color
   }
   bgColor="#fecaca"
-  note="Optimal: 0–2 ppm"
+  note="Optimal: 0ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“2 ppm"
 />
 
 
           <ParamCard
-  icon="📄"
-  title="Ventilation Fan"
+  icon="ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Å¾"
+  title="Positive Pressure Fan"
   value={
     !latestSensor || isStale
-      ? "—"
+      ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
       : typeof latestSensor.fanIntakeRpm === "number"
       ? `${latestSensor.fanIntakeRpm.toFixed(0)} rpm`
       : sensorLoading
       ? "Loading..."
-      : "—"
+      : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
   }
   status={
     !latestSensor || isStale
@@ -705,20 +727,50 @@ function DashboardPage({
         ).color
   }
   bgColor="#cffafe"
-  note="Single shared fan (tach + PWM on same line)"
+  note="Intake fan"
 />
-
 <ParamCard
-  icon="☀️"
+  icon="ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Å¾"
+  title="Exhaust Fan"
+  value={
+    !latestSensor || isStale
+      ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
+      : typeof latestSensor.fanExhaustRpm === "number"
+      ? `${latestSensor.fanExhaustRpm.toFixed(0)} rpm`
+      : sensorLoading
+      ? "Loading..."
+      : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
+  }
+  status={
+    !latestSensor || isStale
+      ? "No recent data"
+      : getFanStatus(
+          latestSensor?.fanExhaustRpm,
+          latestSensor?.fanExhaustDuty
+        ).text
+  }
+  statusColor={
+    !latestSensor || isStale
+      ? "#9ca3af"
+      : getFanStatus(
+          latestSensor?.fanExhaustRpm,
+          latestSensor?.fanExhaustDuty
+        ).color
+  }
+  bgColor="#cffafe"
+  note="Exhaust fan"
+/>
+<ParamCard
+  icon="ÃƒÂ¢Ã‹Å“Ã¢â€šÂ¬ÃƒÂ¯Ã‚Â¸Ã‚Â"
   title="Lighting"
   value={
     !latestSensor || isStale
-      ? "—"
+      ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
       : typeof latestSensor.lightStatus === "string"
       ? latestSensor.lightStatus
       : sensorLoading
       ? "Loading..."
-      : "—"
+      : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
   }
   status={
     !latestSensor || isStale
@@ -731,7 +783,7 @@ function DashboardPage({
       : getLightStatus(latestSensor?.lightStatus).color
   }
   bgColor="#fef08a"
-  note="20–40 lux"
+  note="20ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“40 lux"
 />
 
 
@@ -748,7 +800,7 @@ function DashboardPage({
             color: "#111827",
           }}
         >
-          🎮 Manual Controls (Testing)
+          ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Â® Manual Controls (Testing)
         </h2>
         <div
           style={{
@@ -758,19 +810,55 @@ function DashboardPage({
           }}
         >
           {/* LIGHTS */}
-          <ControlPanel title="💡 Lighting Control">
-            <ControlRow
-              label="Growing Phase Lights"
-              state={lightsState}
-              onOn={() => sendControlCommand("light", "ON")}
-              onOff={() => sendControlCommand("light", "OFF")}
-            />
-          </ControlPanel>
+<ControlPanel title="ðŸ’¡ Lighting Control">
+  <div style={{ marginBottom: 20 }}>
+    <span
+      style={{
+        fontSize: 12,
+        fontWeight: 600,
+        color: "#111827",
+        marginBottom: 8,
+        display: "block",
+      }}
+    >
+      Growing Phase Lights
+    </span>
+    <div style={{ display: "flex", gap: 8 }}>
+      <ToggleButton
+        active={lightMode === "AUTO"}
+        onClick={() => sendControlCommand("light", "AUTO")}
+      >
+        AUTO
+      </ToggleButton>
+      <ToggleButton
+        active={lightMode === "FORCE_ON"}
+        onClick={() => sendControlCommand("light", "ON")}
+      >
+        FORCE ON
+      </ToggleButton>
+      <ToggleButton
+        active={lightMode === "FORCE_OFF"}
+        onClick={() => sendControlCommand("light", "OFF")}
+      >
+        FORCE OFF
+      </ToggleButton>
+    </div>
+    <div
+      style={{
+        marginTop: 6,
+        fontSize: 11,
+        color: "#6b7280",
+      }}
+    >
+      Current state: {lightsState}
+    </div>
+  </div>
+</ControlPanel>
 
-          {/* FANS */}
-          <ControlPanel title="📄 Fan Control">
+         {/* FANS */}
+<ControlPanel title="ðŸ“ˆ Ventilation Fan Control">
   <ControlRow
-    label="Ventilation Fan (override)"
+    label="Ventilation Fan"
     state={fanState}
     onOn={() => sendControlCommand("fan", "ON")}
     onOff={() => sendControlCommand("fan", "OFF")}
@@ -779,7 +867,7 @@ function DashboardPage({
 
 
           {/* PRESSURE WASHER */}
-          <ControlPanel title="💨 Pressure Washer">
+          <ControlPanel title="ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â¨ Pressure Washer">
             <div>
               <span
                 style={{
@@ -833,7 +921,7 @@ function DashboardPage({
             color: "#111827",
           }}
         >
-          ⚙️ Current Setpoints
+          ÃƒÂ¢Ã…Â¡Ã¢â€žÂ¢ÃƒÂ¯Ã‚Â¸Ã‚Â Current Setpoints
         </h2>
         <div
           style={{
@@ -844,11 +932,11 @@ function DashboardPage({
             boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
           }}
         >
-          <SetpointItem label="Temperature Setpoint (PID):" value="25–26°C" />
-          <SetpointItem label="Humidity Target:" value="60–80%" />
+          <SetpointItem label="Temperature Setpoint (PID):" value="25ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“26Ãƒâ€šÃ‚Â°C" />
+          <SetpointItem label="Humidity Target:" value="60ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“80%" />
           <SetpointItem label="Light ON / OFF:" value="20 lux / 40 lux" />
           <SetpointItem label="Ammonia Warning:" value=">20 ppm" />
-          <SetpointItem label="Methane Optimal:" value="0–2 ppm" last={true} />
+          <SetpointItem label="Methane Optimal:" value="0ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“2 ppm" last={true} />
         </div>
       </section>
 
@@ -862,7 +950,7 @@ function DashboardPage({
             color: "#111827",
           }}
         >
-          📊 Environmental Trends (24-Hour)
+          ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã…  Environmental Trends (24-Hour)
         </h2>
         <div
           style={{
@@ -872,19 +960,19 @@ function DashboardPage({
           }}
         >
           <ChartContainer
-            title="🌡️ Temperature Trend"
+            title="ÃƒÂ°Ã…Â¸Ã…â€™Ã‚Â¡ÃƒÂ¯Ã‚Â¸Ã‚Â Temperature Trend"
             data={chartData.temp}
             maxValue={35}
             color="#3b82f6"
           />
           <ChartContainer
-            title="💧 Humidity Trend"
+            title="ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â§ Humidity Trend"
             data={chartData.humidity}
             maxValue={100}
             color="#0ea5e9"
           />
           <ChartContainer
-            title="☁️ Ammonia Level Trend"
+            title="ÃƒÂ¢Ã‹Å“Ã‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â Ammonia Level Trend"
             data={chartData.ammonia}
             maxValue={25}
             color="#f97316"
@@ -1086,7 +1174,7 @@ function BatchPlanningPage() {
     <>
       <section style={{ marginBottom: 24 }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-          📊 Farm Statistics Dashboard
+          ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã…  Farm Statistics Dashboard
         </h2>
 
         <div
@@ -1100,7 +1188,7 @@ function BatchPlanningPage() {
           }}
         >
           <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-            📋 Update Flock Information
+            ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Â¹ Update Flock Information
           </h3>
           <div
             style={{
@@ -1150,7 +1238,7 @@ function BatchPlanningPage() {
             </div>
           </div>
           <p style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-            ✓ Changes saved automatically
+            ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Changes saved automatically
           </p>
         </div>
 
@@ -1178,7 +1266,7 @@ function BatchPlanningPage() {
           }}
         >
           <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-            📊 Flock Summary
+            ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã…  Flock Summary
           </h3>
 
           <div
@@ -1196,7 +1284,7 @@ function BatchPlanningPage() {
                 textAlign: "center",
               }}
             >
-              <div style={{ fontSize: 24, marginBottom: 8 }}>✓</div>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#16a34a", marginBottom: 4 }}>
                 Healthy Birds
               </div>
@@ -1214,7 +1302,7 @@ function BatchPlanningPage() {
                 textAlign: "center",
               }}
             >
-              <div style={{ fontSize: 24, marginBottom: 8 }}>✗</div>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>ÃƒÂ¢Ã…â€œÃ¢â‚¬â€</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>
                 Birds Lost
               </div>
@@ -1229,7 +1317,7 @@ function BatchPlanningPage() {
 
       <section style={{ marginTop: 24 }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-          📅 Expected Harvest & Batch Planning
+          ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Â¦ Expected Harvest & Batch Planning
         </h2>
         <div
           style={{
@@ -1325,7 +1413,7 @@ function AlertsPage() {
   return (
     <section style={{ marginBottom: 24 }}>
       <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-        ⚠️ Early Warning Notifications
+        ÃƒÂ¢Ã…Â¡ ÃƒÂ¯Ã‚Â¸Ã‚Â Early Warning Notifications
       </h2>
       <div
         style={{
@@ -1338,7 +1426,7 @@ function AlertsPage() {
       >
         <AlertItem
           title="Current System State"
-          message="✓ Healthy - All parameters within normal range"
+          message="ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Healthy - All parameters within normal range"
           type="success"
         />
         <AlertItem
@@ -1382,7 +1470,7 @@ function ProfilePage() {
   return (
     <section style={{ marginBottom: 24 }}>
       <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-        👤 Farmer Profile
+        ÃƒÂ°Ã…Â¸Ã¢â‚¬ËœÃ‚Â¤ Farmer Profile
       </h2>
       <div
         style={{
@@ -1425,7 +1513,7 @@ function SettingsPage() {
   return (
     <section style={{ marginBottom: 24 }}>
       <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-        ⚙️ System Settings & Thresholds
+        ÃƒÂ¢Ã…Â¡Ã¢â€žÂ¢ÃƒÂ¯Ã‚Â¸Ã‚Â System Settings & Thresholds
       </h2>
       <div
         style={{
@@ -1435,54 +1523,54 @@ function SettingsPage() {
         }}
       >
         <SettingsCard
-          title="🌡️ Temperature Control (PID-based)"
+          title="ÃƒÂ°Ã…Â¸Ã…â€™Ã‚Â¡ÃƒÂ¯Ã‚Â¸Ã‚Â Temperature Control (PID-based)"
           items={[
-            ["Setpoint:", "25–26°C (grown birds)"],
-            ["Optimal:", "24–26°C"],
-            ["Warning:", "27–29°C"],
-            ["Critical:", ">29°C or <22°C"],
-            ["Kp:", "0.8–2.0"],
-            ["Ki:", "0.2–0.5"],
-            ["Kd:", "0.1–0.3"],
+            ["Setpoint:", "25ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“26Ãƒâ€šÃ‚Â°C (grown birds)"],
+            ["Optimal:", "24ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“26Ãƒâ€šÃ‚Â°C"],
+            ["Warning:", "27ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“29Ãƒâ€šÃ‚Â°C"],
+            ["Critical:", ">29Ãƒâ€šÃ‚Â°C or <22Ãƒâ€šÃ‚Â°C"],
+            ["Kp:", "0.8ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“2.0"],
+            ["Ki:", "0.2ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“0.5"],
+            ["Kd:", "0.1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“0.3"],
           ]}
         />
         <SettingsCard
-          title="💧 Humidity Monitoring"
+          title="ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â§ Humidity Monitoring"
           items={[
-            ["Optimal:", "60–80%"],
-            ["Warning:", "81–85%"],
+            ["Optimal:", "60ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“80%"],
+            ["Warning:", "81ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“85%"],
             ["Critical:", ">85% or <55%"],
           ]}
         />
         <SettingsCard
-          title="☁️ Ammonia & Gas Control"
+          title="ÃƒÂ¢Ã‹Å“Ã‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â Ammonia & Gas Control"
           items={[
-            ["Optimal:", "0–5 ppm (fan: 20–30%)"],
-            ["Normal:", "6–20 ppm (fan: 40–80%)"],
+            ["Optimal:", "0ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“5 ppm (fan: 20ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“30%)"],
+            ["Normal:", "6ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“20 ppm (fan: 40ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“80%)"],
             ["Critical:", ">20 ppm (fan: 100%)"],
           ]}
         />
         <SettingsCard
-          title="☀️ Lighting Control"
+          title="ÃƒÂ¢Ã‹Å“Ã¢â€šÂ¬ÃƒÂ¯Ã‚Â¸Ã‚Â Lighting Control"
           items={[
             ["Growing:", "ON <20 lux, OFF >40 lux"],
             ["Brooding:", "ON <80 lux, OFF >100 lux"],
           ]}
         />
         <SettingsCard
-          title="📄 Fan Monitoring (RPM)"
+          title="ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Å¾ Fan Monitoring (RPM)"
           items={[
             ["Normal:", "RPM matches PWM relationship"],
-            ["Warning:", "Δ RPM >1500 (bearing wear)"],
+            ["Warning:", "ÃƒÅ½Ã¢â‚¬Â RPM >1500 (bearing wear)"],
             ["Critical:", "RPM = 0 at PWM >50%"],
           ]}
         />
         <SettingsCard
-          title="💨 Methane Thresholds"
+          title="ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â¨ Methane Thresholds"
           items={[
-            ["Optimal:", "0–2 ppm (litter dry)"],
-            ["Elevated:", "3–5 ppm (fan: 40–60%)"],
-            ["Critical:", ">5 ppm (fan: 90–100%)"],
+            ["Optimal:", "0ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“2 ppm (litter dry)"],
+            ["Elevated:", "3ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“5 ppm (fan: 40ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“60%)"],
+            ["Critical:", ">5 ppm (fan: 90ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“100%)"],
           ]}
         />
       </div>
