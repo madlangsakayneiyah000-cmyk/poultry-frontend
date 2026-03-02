@@ -163,28 +163,35 @@ useEffect(() => {
     return () => clearInterval(intervalId);
   }, []);
 
-  // ===== CONTROL ACTUATORS (NEW, TWO-WAY) =====
+  
+// ===== CONTROL ACTUATORS (NEW, TWO-WAY) =====
 const sendControlCommand = async (target, state) => {
   try {
-    // Map frontend target/state -> backend device/mode
     let device = "";
     let mode = "";
     let timerDuration = undefined;
 
     if (target === "light") {
       device = "light";
-      mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
+      // LIGHT:
+      // ON  => FORCE_ON  (manual ON override)
+      // OFF => AUTO      (balik sensor-based)
+      mode = state === "ON" ? "FORCE_ON" : "AUTO";
+
     } else if (target === "fan") {
-      // Single fan control, mapped to fan_positive in backend
       device = "fan_positive";
-      mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
+      // FAN:
+      // ON  => AUTO       (balik normal automatic/laging naka-on logic)
+      // OFF => FORCE_OFF  (override patay)
+      mode = state === "ON" ? "AUTO" : "FORCE_OFF";
+
     } else if (target === "pressureWasher") {
       device = "pressure_washer";
       mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
-      // 45-second cycle tulad sa UI mo
       if (state === "ON") {
         timerDuration = 45;
       }
+
     } else {
       throw new Error("Unknown target: " + target);
     }
@@ -209,6 +216,7 @@ const sendControlCommand = async (target, state) => {
     const result = await res.json();
     console.log("Control command sent:", result);
 
+  
     // Update local UI state (for instant feedback)
     if (target === "light") setLightsState(state);
     if (target === "fan") setFanState(state);
