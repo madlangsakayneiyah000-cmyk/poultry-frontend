@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
 
-// 🔌 BACKEND URL - Your Render backend
+// BACKEND URL - Your Render backend
 const BACKEND_URL = "https://poultry-backend-pwpf.onrender.com"; // final-defense
-
 
 // ===== DYNAMIC STATUS HELPERS =====
 function getTemperatureStatus(temp) {
@@ -39,17 +38,25 @@ function getMethaneStatus(methane) {
   return { text: "Normal", color: "#10b981" };
 }
 
+// FIXED: ignore -1 placeholders from light MCU
 function getFanStatus(rpm, duty) {
-  if (rpm === null || rpm === undefined) return { text: "No data", color: "#9ca3af" };
+  if (rpm === null || rpm === undefined || rpm < 0) return { text: "No data", color: "#9ca3af" };
   if (rpm === 0 && duty > 50) return { text: "Fault", color: "#ef4444" };
   if (rpm > 0) return { text: "Running", color: "#10b981" };
   return { text: "Stopped", color: "#6b7280" };
 }
 
 function getLightStatus(status) {
-  if (!status) return { text: "No data", color: "#9ca3af" };
+  if (!status || status === "") return { text: "No data", color: "#9ca3af" };
   if (status === "ON") return { text: "Active", color: "#10b981" };
   return { text: "Off", color: "#6b7280" };
+}
+
+// ===== HELPER: safe fan RPM display (ignores -1 from light MCU) =====
+function formatFanRpm(rpm, sensorLoading) {
+  if (rpm === null || rpm === undefined || rpm < 0) return "—";
+  if (sensorLoading) return "Loading...";
+  return `${rpm.toFixed(0)} rpm`;
 }
 
 function App() {
@@ -72,81 +79,75 @@ function App() {
 
   // Actuator states
   const [lightsState, setLightsState] = useState("OFF");
-  const [lightMode, setLightMode] = useState("AUTO"); // "AUTO", "FORCE_ON", "FORCE_OFF"
-  const [fanState, setFanState] = useState("OFF");    // single ventilation fan
-  const [fanMode, setFanMode] = useState("AUTO");     // ✅ NEW: "AUTO", "FORCE_ON", "FORCE_OFF"
+  const [lightMode, setLightMode] = useState("AUTO");
+  const [fanState, setFanState] = useState("OFF");
+  const [fanMode, setFanMode] = useState("AUTO");
   const [washerRunning, setWasherRunning] = useState(false);
   const [washerTime, setWasherTime] = useState(45);
 
-
   // ===== FETCH LATEST SENSOR DATA =====
+  useEffect(() => {
+    const fetchLatestSensor = async () => {
+      try {
+        setSensorLoading(true);
+        setSensorError(null);
 
-useEffect(() => {
-  const fetchLatestSensor = async () => {
-    try {
-      setSensorLoading(true);
-      setSensorError(null);
+        const res = await fetch(`${BACKEND_URL}/api/sensors/latest`);
 
-      const res = await fetch(`${BACKEND_URL}/api/sensors/latest`);
-
-      if (!res.ok) {
-        if (res.status === 404) {
-          setLatestSensor(null);
-          setLastUpdateAgeSeconds(null);
-          return;
+        if (!res.ok) {
+          if (res.status === 404) {
+            setLatestSensor(null);
+            setLastUpdateAgeSeconds(null);
+            return;
+          }
+          throw new Error("Failed to fetch sensor data");
         }
-        throw new Error("Failed to fetch sensor data");
+
+        const data = await res.json();
+        setLatestSensor(data);
+
+        if (data.createdAt) {
+          const created = new Date(data.createdAt);
+          const ageSec = Math.floor((Date.now() - created.getTime()) / 1000);
+          setLastUpdateAgeSeconds(ageSec);
+        } else {
+          setLastUpdateAgeSeconds(null);
+        }
+
+        // Update actuator states from sensor data
+        if (data.lightStatus && data.lightStatus !== "") {
+          if (lightMode === "AUTO") {
+            setLightsState(data.lightStatus);
+          }
+        }
+
+        if (data.pressureWasherStatus && data.pressureWasherStatus !== "") {
+          setWasherRunning(data.pressureWasherStatus === "ON");
+        }
+      } catch (err) {
+        console.error("Error fetching sensor data:", err);
+        setSensorError(err.message || "Error fetching sensor data");
+      } finally {
+        setSensorLoading(false);
       }
+    };
 
-      const data = await res.json();
-      setLatestSensor(data);
+    fetchLatestSensor();
+    const intervalId = setInterval(fetchLatestSensor, 3000);
+    return () => clearInterval(intervalId);
+  }, [lightMode]);
 
-      // compute initial age based on createdAt
-      if (data.createdAt) {
-        const created = new Date(data.createdAt);
+  useEffect(() => {
+    let interval;
+    if (latestSensor && latestSensor.createdAt) {
+      interval = setInterval(() => {
+        const created = new Date(latestSensor.createdAt);
         const ageSec = Math.floor((Date.now() - created.getTime()) / 1000);
         setLastUpdateAgeSeconds(ageSec);
-      } else {
-        setLastUpdateAgeSeconds(null);
-      }
-
-      // Update actuator states from sensor data
-      if (data.lightStatus) {
-        // kapag AUTO lang, saka sundin ang MCU state
-        if (lightMode === "AUTO") {
-          setLightsState(data.lightStatus);
-        }
-      }
-
-      if (data.pressureWasherStatus) {
-        setWasherRunning(data.pressureWasherStatus === "ON");
-      }
-    } catch (err) {
-      console.error("Error fetching sensor data:", err);
-      setSensorError(err.message || "Error fetching sensor data");
-    } finally {
-      setSensorLoading(false);
+      }, 1000);
     }
-  };
-
-  fetchLatestSensor();
-
-  // mas mabilis na refresh for "live" feeling
-  const intervalId = setInterval(fetchLatestSensor, 3000);
-  return () => clearInterval(intervalId);
-}, [lightMode]);
-
-useEffect(() => {
-  let interval;
-  if (latestSensor && latestSensor.createdAt) {
-    interval = setInterval(() => {
-      const created = new Date(latestSensor.createdAt);
-      const ageSec = Math.floor((Date.now() - created.getTime()) / 1000);
-      setLastUpdateAgeSeconds(ageSec);
-    }, 1000);
-  }
-  return () => clearInterval(interval);
-}, [latestSensor]);
+    return () => clearInterval(interval);
+  }, [latestSensor]);
 
   // ===== FETCH HISTORICAL DATA FOR CHARTS =====
   useEffect(() => {
@@ -168,140 +169,133 @@ useEffect(() => {
     };
 
     fetchHistory();
-
-    // Refresh chart every 5 minutes
     const intervalId = setInterval(fetchHistory, 300000);
     return () => clearInterval(intervalId);
   }, []);
 
-  
-// ===== ✅ NEW: FETCH CONTROL STATE (two-way sync) =====
-useEffect(() => {
-  const fetchControlState = async () => {
+  // ===== FETCH CONTROL STATE (two-way sync) =====
+  useEffect(() => {
+    const fetchControlState = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/control/state`);
+        if (!res.ok) return;
+        const control = await res.json();
+
+        // Light
+        if (control.light) {
+          setLightMode(control.light.mode || "AUTO");
+          if (control.light.mode === "AUTO") {
+            setLightsState(control.light.state || "OFF");
+          }
+        }
+
+        // Fan (use fan_positive as representative of unified fan)
+        if (control.fan_positive) {
+          setFanMode(control.fan_positive.mode || "AUTO");
+          if (control.fan_positive.mode === "AUTO") {
+            setFanState(control.fan_positive.state || "OFF");
+          }
+        }
+
+        // Washer
+        if (control.pressure_washer) {
+          setWasherRunning(control.pressure_washer.state === "ON");
+        }
+      } catch (err) {
+        console.error("Error fetching control state:", err);
+      }
+    };
+
+    fetchControlState();
+    const intervalId = setInterval(fetchControlState, 3000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  // ===== CONTROL ACTUATORS (with AUTO support) =====
+  const sendControlCommand = async (target, state) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/control/state`);
-      if (!res.ok) return;
-      const control = await res.json();
+      let device = "";
+      let mode = "";
+      let timerDuration = undefined;
 
-      // Light
-      if (control.light) {
-        setLightMode(control.light.mode || "AUTO");
-        if (control.light.mode === "AUTO") {
-          setLightsState(control.light.state || "OFF");
+      if (target === "light") {
+        device = "light";
+        if (state === "AUTO") {
+          mode = "AUTO";
+        } else {
+          mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
+        }
+      } else if (target === "fan") {
+        device = "fan";
+        if (state === "AUTO") {
+          mode = "AUTO";
+        } else {
+          mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
+        }
+      } else if (target === "pressureWasher") {
+        device = "pressure_washer";
+        mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
+        if (state === "ON") {
+          timerDuration = 45;
+        }
+      } else {
+        throw new Error("Unknown target: " + target);
+      }
+
+      const body = { device, mode };
+      if (timerDuration !== undefined) {
+        body.timerDuration = timerDuration;
+      }
+
+      const res = await fetch(`${BACKEND_URL}/api/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("Backend error:", errText);
+        throw new Error("Failed to send control command");
+      }
+
+      const result = await res.json();
+      console.log("Control command sent:", result);
+
+      // Update local UI state for instant feedback
+      if (target === "light") {
+        if (state === "AUTO") {
+          setLightMode("AUTO");
+        } else if (state === "ON") {
+          setLightMode("FORCE_ON");
+          setLightsState("ON");
+        } else if (state === "OFF") {
+          setLightMode("FORCE_OFF");
+          setLightsState("OFF");
         }
       }
 
-      // Fan (use fan_positive as representative of unified fan)
-      if (control.fan_positive) {
-        setFanMode(control.fan_positive.mode || "AUTO");
-        if (control.fan_positive.mode === "AUTO") {
-          setFanState(control.fan_positive.state || "OFF");
+      if (target === "fan") {
+        if (state === "AUTO") {
+          setFanMode("AUTO");
+        } else if (state === "ON") {
+          setFanMode("FORCE_ON");
+          setFanState("ON");
+        } else if (state === "OFF") {
+          setFanMode("FORCE_OFF");
+          setFanState("OFF");
         }
       }
 
-      // Washer
-      if (control.pressure_washer) {
-        setWasherRunning(control.pressure_washer.state === "ON");
+      if (target === "pressureWasher") {
+        setWasherRunning(state === "ON");
+        if (state === "ON") setWasherTime(45);
       }
     } catch (err) {
-      console.error("Error fetching control state:", err);
+      console.error("Error sending control command:", err);
+      alert("Failed to send command: " + err.message);
     }
   };
-
-  fetchControlState();
-  const intervalId = setInterval(fetchControlState, 3000); // sync every 3s
-  return () => clearInterval(intervalId);
-}, []);
-
-// ===== CONTROL ACTUATORS (UPDATED: with AUTO support for fan) =====
-const sendControlCommand = async (target, state) => {
-  try {
-    // Map frontend target/state -> backend device/mode
-    let device = "";
-    let mode = "";
-    let timerDuration = undefined;
-
-    if (target === "light") {
-      device = "light";
-      if (state === "AUTO") {
-        mode = "AUTO";
-      } else {
-        mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
-      }
-    } else if (target === "fan") {
-      // ✅ UPDATED: unified ventilation fan with AUTO support
-      device = "fan";
-      if (state === "AUTO") {
-        mode = "AUTO";
-      } else {
-        mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
-      }
-    } else if (target === "pressureWasher") {
-      device = "pressure_washer";
-      mode = state === "ON" ? "FORCE_ON" : "FORCE_OFF";
-      // 45-second cycle tulad sa UI mo (pwede mong alisin kung gusto mong purely manual)
-      if (state === "ON") {
-        timerDuration = 45;
-      }
-    } else {
-      throw new Error("Unknown target: " + target);
-    }
-
-    const body = { device, mode };
-    if (timerDuration !== undefined) {
-      body.timerDuration = timerDuration;
-    }
-
-    const res = await fetch(`${BACKEND_URL}/api/control`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error("Backend error:", errText);
-      throw new Error("Failed to send control command");
-    }
-
-    const result = await res.json();
-    console.log("Control command sent:", result);
-
-    // Update local UI state (for instant feedback)
-    if (target === "light") {
-      if (state === "AUTO") {
-        setLightMode("AUTO");
-      } else if (state === "ON") {
-        setLightMode("FORCE_ON");
-        setLightsState("ON");
-      } else if (state === "OFF") {
-        setLightMode("FORCE_OFF");
-        setLightsState("OFF");
-      }
-    }
-
-    // ✅ UPDATED: fan mode handling
-    if (target === "fan") {
-      if (state === "AUTO") {
-        setFanMode("AUTO");
-      } else if (state === "ON") {
-        setFanMode("FORCE_ON");
-        setFanState("ON");
-      } else if (state === "OFF") {
-        setFanMode("FORCE_OFF");
-        setFanState("OFF");
-      }
-    }
-
-    if (target === "pressureWasher") {
-      setWasherRunning(state === "ON");
-      if (state === "ON") setWasherTime(45);
-    }
-  } catch (err) {
-    console.error("Error sending control command:", err);
-    alert("Failed to send command: " + err.message);
-  }
-};
 
   // ===== PRESSURE WASHER TIMER =====
   useEffect(() => {
@@ -556,20 +550,19 @@ const sendControlCommand = async (target, state) => {
         <div style={{ padding: 24, maxWidth: 1400, margin: "0 auto" }}>
           {activePage === "dashboard" && (
             <DashboardPage
-  chartData={chartData}
-  washerRunning={washerRunning}
-  washerTime={washerTime}
-  latestSensor={latestSensor}
-  sensorLoading={sensorLoading}
-  sensorError={sensorError}
-  lightsState={lightsState}
-  lightMode={lightMode}
-  fanState={fanState}
-  fanMode={fanMode}
-  sendControlCommand={sendControlCommand}
-  lastUpdateAgeSeconds={lastUpdateAgeSeconds}
-/>
-
+              chartData={chartData}
+              washerRunning={washerRunning}
+              washerTime={washerTime}
+              latestSensor={latestSensor}
+              sensorLoading={sensorLoading}
+              sensorError={sensorError}
+              lightsState={lightsState}
+              lightMode={lightMode}
+              fanState={fanState}
+              fanMode={fanMode}
+              sendControlCommand={sendControlCommand}
+              lastUpdateAgeSeconds={lastUpdateAgeSeconds}
+            />
           )}
           {activePage === "batch" && <BatchPlanningPage />}
           {activePage === "alerts" && <AlertsPage />}
@@ -605,24 +598,23 @@ function DashboardPage({
   fanMode,
   sendControlCommand,
   lastUpdateAgeSeconds,
-
 }) {
-
-  const isStale =
-  lastUpdateAgeSeconds !== null && lastUpdateAgeSeconds > 60; // 60s example
+  const isStale = lastUpdateAgeSeconds !== null && lastUpdateAgeSeconds > 60;
 
   return (
     <>
       {sensorError && (
-        <div style={{ 
-          background: "#fee2e2", 
-          border: "1px solid #fca5a5",
-          borderRadius: 8,
-          padding: 12,
-          marginBottom: 16,
-          fontSize: 13,
-          color: "#991b1b"
-        }}>
+        <div
+          style={{
+            background: "#fee2e2",
+            border: "1px solid #fca5a5",
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 16,
+            fontSize: 13,
+            color: "#991b1b",
+          }}
+        >
           ⚠️ Sensor error: {sensorError}
         </div>
       )}
@@ -646,199 +638,179 @@ function DashboardPage({
             gap: 12,
           }}
         >
-      <ParamCard
-  icon="🌡️"
-  title="Temperature"
-  value={
-    !latestSensor || isStale
-      ? "—"
-      : typeof latestSensor.temperature === "number"
-      ? `${latestSensor.temperature.toFixed(1)}°C`
-      : sensorLoading
-      ? "Loading..."
-      : "—"
-  }
-  status={
-    !latestSensor || isStale
-      ? "No recent data"
-      : getTemperatureStatus(latestSensor?.temperature).text
-  }
-  statusColor={
-    !latestSensor || isStale
-      ? "#9ca3af"
-      : getTemperatureStatus(latestSensor?.temperature).color
-  }
-  bgColor="#e0f2fe"
-  note="Target: 24–26°C"
-/>
+          <ParamCard
+            icon="🌡️"
+            title="Temperature"
+            value={
+              !latestSensor || isStale
+                ? "—"
+                : typeof latestSensor.temperature === "number"
+                ? `${latestSensor.temperature.toFixed(1)}°C`
+                : sensorLoading
+                ? "Loading..."
+                : "—"
+            }
+            status={
+              !latestSensor || isStale
+                ? "No recent data"
+                : getTemperatureStatus(latestSensor?.temperature).text
+            }
+            statusColor={
+              !latestSensor || isStale
+                ? "#9ca3af"
+                : getTemperatureStatus(latestSensor?.temperature).color
+            }
+            bgColor="#e0f2fe"
+            note="Target: 24–26°C"
+          />
 
-<ParamCard
-  icon="💧"
-  title="Humidity"
-  value={
-    !latestSensor || isStale
-      ? "—"
-      : typeof latestSensor.humidity === "number"
-      ? `${latestSensor.humidity.toFixed(0)}%`
-      : sensorLoading
-      ? "Loading..."
-      : "—"
-  }
-  status={
-    !latestSensor || isStale
-      ? "No recent data"
-      : getHumidityStatus(latestSensor?.humidity).text
-  }
-  statusColor={
-    !latestSensor || isStale
-      ? "#9ca3af"
-      : getHumidityStatus(latestSensor?.humidity).color
-  }
-  bgColor="#dcfce7"
-  note="Target: 60–80%"
-/>
+          <ParamCard
+            icon="💧"
+            title="Humidity"
+            value={
+              !latestSensor || isStale
+                ? "—"
+                : typeof latestSensor.humidity === "number"
+                ? `${latestSensor.humidity.toFixed(0)}%`
+                : sensorLoading
+                ? "Loading..."
+                : "—"
+            }
+            status={
+              !latestSensor || isStale
+                ? "No recent data"
+                : getHumidityStatus(latestSensor?.humidity).text
+            }
+            statusColor={
+              !latestSensor || isStale
+                ? "#9ca3af"
+                : getHumidityStatus(latestSensor?.humidity).color
+            }
+            bgColor="#dcfce7"
+            note="Target: 60–80%"
+          />
 
-         
-      <ParamCard
-  icon="☣️"
-  title="Ammonia (NH₃)"
-  value={
-    !latestSensor || isStale
-      ? "—"
-      : typeof latestSensor.ammonia === "number"
-      ? `${latestSensor.ammonia.toFixed(1)} ppm`
-      : sensorLoading
-      ? "Loading..."
-      : "—"
-  }
-  status={
-    !latestSensor || isStale
-      ? "No recent data"
-      : getAmmoniaStatus(latestSensor?.ammonia).text
-  }
-  statusColor={
-    !latestSensor || isStale
-      ? "#9ca3af"
-      : getAmmoniaStatus(latestSensor?.ammonia).color
-  }
-  bgColor="#fef3c7"
-  note="Optimal: 0–5 ppm"
-/>
-    <ParamCard
-  icon="💨"
-  title="Methane (CH₄)"
-  value={
-    !latestSensor || isStale
-      ? "—"
-      : typeof latestSensor.methane === "number"
-      ? `${latestSensor.methane.toFixed(1)} ppm`
-      : sensorLoading
-      ? "Loading..."
-      : "—"
-  }
-  status={
-    !latestSensor || isStale
-      ? "No recent data"
-      : getMethaneStatus(latestSensor?.methane).text
-  }
-  statusColor={
-    !latestSensor || isStale
-      ? "#9ca3af"
-      : getMethaneStatus(latestSensor?.methane).color
-  }
-  bgColor="#fecaca"
-  note="Optimal: 0–2 ppm"
-/>
+          <ParamCard
+            icon="☣️"
+            title="Ammonia (NH₃)"
+            value={
+              !latestSensor || isStale
+                ? "—"
+                : typeof latestSensor.ammonia === "number"
+                ? `${latestSensor.ammonia.toFixed(1)} ppm`
+                : sensorLoading
+                ? "Loading..."
+                : "—"
+            }
+            status={
+              !latestSensor || isStale
+                ? "No recent data"
+                : getAmmoniaStatus(latestSensor?.ammonia).text
+            }
+            statusColor={
+              !latestSensor || isStale
+                ? "#9ca3af"
+                : getAmmoniaStatus(latestSensor?.ammonia).color
+            }
+            bgColor="#fef3c7"
+            note="Optimal: 0–5 ppm"
+          />
 
-<ParamCard
-  icon="🌀"
-  title="Positive Pressure Fan"
-  value={
-    !latestSensor || isStale
-      ? "—"
-      : typeof latestSensor.fanIntakeRpm === "number"
-      ? `${latestSensor.fanIntakeRpm.toFixed(0)} rpm`
-      : sensorLoading
-      ? "Loading..."
-      : "—"
-  }
-  status={
-    !latestSensor || isStale
-      ? "No recent data"
-      : getFanStatus(
-          latestSensor?.fanIntakeRpm,
-          latestSensor?.fanIntakeDuty
-        ).text
-  }
-  statusColor={
-    !latestSensor || isStale
-      ? "#9ca3af"
-      : getFanStatus(
-          latestSensor?.fanIntakeRpm,
-          latestSensor?.fanIntakeDuty
-        ).color
-  }
-  bgColor="#cffafe"
-  note="Intake fan"
-/>
-<ParamCard
-  icon="🌀"
-  title="Exhaust Fan"
-  value={
-    !latestSensor || isStale
-      ? "—"
-      : typeof latestSensor.fanExhaustRpm === "number"
-      ? `${latestSensor.fanExhaustRpm.toFixed(0)} rpm`
-      : sensorLoading
-      ? "Loading..."
-      : "—"
-  }
-  status={
-    !latestSensor || isStale
-      ? "No recent data"
-      : getFanStatus(
-          latestSensor?.fanExhaustRpm,
-          latestSensor?.fanExhaustDuty
-        ).text
-  }
-  statusColor={
-    !latestSensor || isStale
-      ? "#9ca3af"
-      : getFanStatus(
-          latestSensor?.fanExhaustRpm,
-          latestSensor?.fanExhaustDuty
-        ).color
-  }
-  bgColor="#cffafe"
-  note="Exhaust fan"
-/>
-<ParamCard
-  icon="💡"
-  title="Lighting"
-  value={
-    !latestSensor || isStale
-      ? "—"
-      : typeof latestSensor.lightStatus === "string"
-      ? latestSensor.lightStatus
-      : sensorLoading
-      ? "Loading..."
-      : "—"
-  }
-  status={
-    !latestSensor || isStale
-      ? "No recent data"
-      : getLightStatus(latestSensor?.lightStatus).text
-  }
-  statusColor={
-    !latestSensor || isStale
-      ? "#9ca3af"
-      : getLightStatus(latestSensor?.lightStatus).color
-  }
-  bgColor="#fef08a"
-  note="20–40 lux"
-/>
+          <ParamCard
+            icon="💨"
+            title="Methane (CH₄)"
+            value={
+              !latestSensor || isStale
+                ? "—"
+                : typeof latestSensor.methane === "number"
+                ? `${latestSensor.methane.toFixed(1)} ppm`
+                : sensorLoading
+                ? "Loading..."
+                : "—"
+            }
+            status={
+              !latestSensor || isStale
+                ? "No recent data"
+                : getMethaneStatus(latestSensor?.methane).text
+            }
+            statusColor={
+              !latestSensor || isStale
+                ? "#9ca3af"
+                : getMethaneStatus(latestSensor?.methane).color
+            }
+            bgColor="#fecaca"
+            note="Optimal: 0–2 ppm"
+          />
 
+          <ParamCard
+            icon="🌀"
+            title="Positive Pressure Fan"
+            value={
+              !latestSensor || isStale
+                ? "—"
+                : formatFanRpm(latestSensor.fanIntakeRpm, sensorLoading)
+            }
+            status={
+              !latestSensor || isStale
+                ? "No recent data"
+                : getFanStatus(latestSensor?.fanIntakeRpm, latestSensor?.fanIntakeDuty).text
+            }
+            statusColor={
+              !latestSensor || isStale
+                ? "#9ca3af"
+                : getFanStatus(latestSensor?.fanIntakeRpm, latestSensor?.fanIntakeDuty).color
+            }
+            bgColor="#cffafe"
+            note="Intake fan"
+          />
 
+          <ParamCard
+            icon="🌀"
+            title="Exhaust Fan"
+            value={
+              !latestSensor || isStale
+                ? "—"
+                : formatFanRpm(latestSensor.fanExhaustRpm, sensorLoading)
+            }
+            status={
+              !latestSensor || isStale
+                ? "No recent data"
+                : getFanStatus(latestSensor?.fanExhaustRpm, latestSensor?.fanExhaustDuty).text
+            }
+            statusColor={
+              !latestSensor || isStale
+                ? "#9ca3af"
+                : getFanStatus(latestSensor?.fanExhaustRpm, latestSensor?.fanExhaustDuty).color
+            }
+            bgColor="#cffafe"
+            note="Exhaust fan"
+          />
+
+          <ParamCard
+            icon="💡"
+            title="Lighting"
+            value={
+              !latestSensor || isStale
+                ? "—"
+                : (typeof latestSensor.lightStatus === "string" && latestSensor.lightStatus !== "")
+                ? latestSensor.lightStatus
+                : sensorLoading
+                ? "Loading..."
+                : "—"
+            }
+            status={
+              !latestSensor || isStale
+                ? "No recent data"
+                : getLightStatus(latestSensor?.lightStatus).text
+            }
+            statusColor={
+              !latestSensor || isStale
+                ? "#9ca3af"
+                : getLightStatus(latestSensor?.lightStatus).color
+            }
+            bgColor="#fef08a"
+            note="20–40 lux"
+          />
         </div>
       </section>
 
@@ -862,95 +834,84 @@ function DashboardPage({
           }}
         >
           {/* LIGHTS */}
-<ControlPanel title="💡 Lighting Control">
-  <div style={{ marginBottom: 20 }}>
-    <span
-      style={{
-        fontSize: 12,
-        fontWeight: 600,
-        color: "#111827",
-        marginBottom: 8,
-        display: "block",
-      }}
-    >
-      Growing Phase Lights
-    </span>
-    <div style={{ display: "flex", gap: 8 }}>
-      <ToggleButton
-        active={lightMode === "AUTO"}
-        onClick={() => sendControlCommand("light", "AUTO")}
-      >
-        AUTO
-      </ToggleButton>
-      <ToggleButton
-        active={lightMode === "FORCE_ON"}
-        onClick={() => sendControlCommand("light", "ON")}
-      >
-        FORCE ON
-      </ToggleButton>
-      <ToggleButton
-        active={lightMode === "FORCE_OFF"}
-        onClick={() => sendControlCommand("light", "OFF")}
-      >
-        FORCE OFF
-      </ToggleButton>
-    </div>
-    <div
-      style={{
-        marginTop: 6,
-        fontSize: 11,
-        color: "#6b7280",
-      }}
-    >
-      Current state: {lightsState} ({lightMode})
-    </div>
-  </div>
-</ControlPanel>
+          <ControlPanel title="💡 Lighting Control">
+            <div style={{ marginBottom: 20 }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "#111827",
+                  marginBottom: 8,
+                  display: "block",
+                }}
+              >
+                Growing Phase Lights
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <ToggleButton
+                  active={lightMode === "AUTO"}
+                  onClick={() => sendControlCommand("light", "AUTO")}
+                >
+                  AUTO
+                </ToggleButton>
+                <ToggleButton
+                  active={lightMode === "FORCE_ON"}
+                  onClick={() => sendControlCommand("light", "ON")}
+                >
+                  FORCE ON
+                </ToggleButton>
+                <ToggleButton
+                  active={lightMode === "FORCE_OFF"}
+                  onClick={() => sendControlCommand("light", "OFF")}
+                >
+                  FORCE OFF
+                </ToggleButton>
+              </div>
+              <div style={{ marginTop: 6, fontSize: 11, color: "#6b7280" }}>
+                Current state: {lightsState} ({lightMode})
+              </div>
+            </div>
+          </ControlPanel>
 
-         {/* ✅ UPDATED: FANS with AUTO mode */}
-<ControlPanel title="📊 Ventilation Fan Control">
-  <div style={{ marginBottom: 20 }}>
-    <span
-      style={{
-        fontSize: 12,
-        fontWeight: 600,
-        color: "#111827",
-        marginBottom: 8,
-        display: "block",
-      }}
-    >
-      Ventilation Fan (Unified)
-    </span>
-    <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-      <ToggleButton
-        active={fanMode === "AUTO"}
-        onClick={() => sendControlCommand("fan", "AUTO")}
-      >
-        AUTO
-      </ToggleButton>
-      <ToggleButton
-        active={fanMode === "FORCE_ON"}
-        onClick={() => sendControlCommand("fan", "ON")}
-      >
-        FORCE ON
-      </ToggleButton>
-      <ToggleButton
-        active={fanMode === "FORCE_OFF"}
-        onClick={() => sendControlCommand("fan", "OFF")}
-      >
-        FORCE OFF
-      </ToggleButton>
-    </div>
-    <div
-      style={{
-        fontSize: 11,
-        color: "#6b7280",
-      }}
-    >
-      Current state: {fanState} ({fanMode})
-    </div>
-  </div>
-</ControlPanel>
+          {/* FANS with AUTO mode */}
+          <ControlPanel title="📊 Ventilation Fan Control">
+            <div style={{ marginBottom: 20 }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "#111827",
+                  marginBottom: 8,
+                  display: "block",
+                }}
+              >
+                Ventilation Fan (Unified)
+              </span>
+              <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                <ToggleButton
+                  active={fanMode === "AUTO"}
+                  onClick={() => sendControlCommand("fan", "AUTO")}
+                >
+                  AUTO
+                </ToggleButton>
+                <ToggleButton
+                  active={fanMode === "FORCE_ON"}
+                  onClick={() => sendControlCommand("fan", "ON")}
+                >
+                  FORCE ON
+                </ToggleButton>
+                <ToggleButton
+                  active={fanMode === "FORCE_OFF"}
+                  onClick={() => sendControlCommand("fan", "OFF")}
+                >
+                  FORCE OFF
+                </ToggleButton>
+              </div>
+              <div style={{ fontSize: 11, color: "#6b7280" }}>
+                Current state: {fanState} ({fanMode})
+              </div>
+            </div>
+          </ControlPanel>
 
           {/* PRESSURE WASHER */}
           <ControlPanel title="🚿 Pressure Washer">
@@ -1045,24 +1006,9 @@ function DashboardPage({
             gap: 16,
           }}
         >
-          <ChartContainer
-            title="🌡️ Temperature Trend"
-            data={chartData.temp}
-            maxValue={35}
-            color="#3b82f6"
-          />
-          <ChartContainer
-            title="💧 Humidity Trend"
-            data={chartData.humidity}
-            maxValue={100}
-            color="#0ea5e9"
-          />
-          <ChartContainer
-            title="☣️ Ammonia Level Trend"
-            data={chartData.ammonia}
-            maxValue={25}
-            color="#f97316"
-          />
+          <ChartContainer title="🌡️ Temperature Trend" data={chartData.temp} maxValue={35} color="#3b82f6" />
+          <ChartContainer title="💧 Humidity Trend" data={chartData.humidity} maxValue={100} color="#0ea5e9" />
+          <ChartContainer title="☣️ Ammonia Level Trend" data={chartData.ammonia} maxValue={25} color="#f97316" />
         </div>
       </section>
     </>
@@ -1199,7 +1145,7 @@ function SetpointItem({ label, value, last = false }) {
 
 function ChartContainer({ title, data, maxValue, color }) {
   const hasData = data && data.length > 0;
-  
+
   return (
     <div
       style={{
@@ -1241,7 +1187,7 @@ function ChartContainer({ title, data, maxValue, color }) {
   );
 }
 
-// ===== OTHER PAGES (Batch Planning, Alerts, Profile, Settings) =====
+// ===== BATCH PLANNING PAGE (RESTORED with calendar + flock stats + timeline) =====
 
 function BatchPlanningPage() {
   const [batchStart, setBatchStart] = useState("2025-12-27");
@@ -1354,7 +1300,6 @@ function BatchPlanningPage() {
           <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
             📊 Flock Summary
           </h3>
-
           <div
             style={{
               display: "grid",
@@ -1362,39 +1307,16 @@ function BatchPlanningPage() {
               gap: 16,
             }}
           >
-            <div
-              style={{
-                borderRadius: 10,
-                border: "2px solid #22c55e",
-                padding: 16,
-                textAlign: "center",
-              }}
-            >
+            <div style={{ borderRadius: 10, border: "2px solid #22c55e", padding: 16, textAlign: "center" }}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>✔</div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#16a34a", marginBottom: 4 }}>
-                Healthy Birds
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: "#166534", marginBottom: 2 }}>
-                {healthyBirds.toLocaleString()}
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#16a34a", marginBottom: 4 }}>Healthy Birds</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "#166534", marginBottom: 2 }}>{healthyBirds.toLocaleString()}</div>
               <div style={{ fontSize: 11, color: "#6b7280" }}>{survivalRate}% survival</div>
             </div>
-
-            <div
-              style={{
-                borderRadius: 10,
-                border: "2px solid #ef4444",
-                padding: 16,
-                textAlign: "center",
-              }}
-            >
+            <div style={{ borderRadius: 10, border: "2px solid #ef4444", padding: 16, textAlign: "center" }}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>✖</div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>
-                Birds Lost
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: "#b91c1c", marginBottom: 2 }}>
-                {birdsDied.toLocaleString()}
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#b91c1c", marginBottom: 4 }}>Birds Lost</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "#b91c1c", marginBottom: 2 }}>{birdsDied.toLocaleString()}</div>
               <div style={{ fontSize: 11, color: "#6b7280" }}>{mortalityRate}% mortality</div>
             </div>
           </div>
@@ -1415,27 +1337,67 @@ function BatchPlanningPage() {
           }}
         >
           <div style={{ display: "grid", gap: 16 }}>
-            <TimelineItem
-              label="Batch Start Date"
-              value={batchStart}
-              icon="🐣"
-            />
-            <TimelineItem
-              label="Current Phase"
-              value={batchPhase}
-              icon="📈"
-            />
-            <TimelineItem
-              label="Expected Harvest"
-              value={harvestDate}
-              icon="🎯"
-            />
-            <TimelineItem
-              label="Days Remaining"
-              value={`${daysToMarket} days`}
-              icon="⏰"
-              last
-            />
+            <TimelineItem label="Batch Start Date" value={batchStart} icon="🐣" />
+            <TimelineItem label="Current Phase" value={batchPhase} icon="📈" />
+            <TimelineItem label="Expected Harvest" value={harvestDate} icon="🎯" />
+            <TimelineItem label="Days Remaining" value={`${daysToMarket} days`} icon="⏰" last />
+          </div>
+        </div>
+      </section>
+
+      {/* Expected Harvest & Phase Section */}
+      <section style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
+          📅 Expected Harvest & Batch Planning
+        </h2>
+        <div
+          style={{
+            background: "white",
+            border: "1px solid #e5e7eb",
+            borderRadius: 10,
+            padding: 16,
+            boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 16,
+            }}
+          >
+            <FormGroup label="Batch Start Date" value={batchStart} onChange={setBatchStart} type="date" />
+            <FormGroup label="Expected Harvest Date" value={harvestDate} onChange={setHarvestDate} type="date" />
+            <div>
+              <label
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#111827",
+                  marginBottom: 6,
+                  display: "block",
+                }}
+              >
+                Batch Phase
+              </label>
+              <select
+                value={batchPhase}
+                onChange={(e) => setBatchPhase(e.target.value)}
+                style={{
+                  padding: "10px 12px",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 6,
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                  background: "#f9fafb",
+                  width: "100%",
+                }}
+              >
+                <option>Brooding (0–14 days)</option>
+                <option>Growing (15–28 days)</option>
+                <option>Finishing (29+ days)</option>
+              </select>
+            </div>
           </div>
         </div>
       </section>
@@ -1486,37 +1448,91 @@ function TimelineItem({ label, value, icon, last = false }) {
   );
 }
 
+function FormGroup({ label, value, onChange, type = "text" }) {
+  return (
+    <div>
+      <label style={{ fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6, display: "block" }}>
+        {label}
+      </label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          padding: "10px 12px",
+          border: "1px solid #e5e7eb",
+          borderRadius: 6,
+          fontSize: 13,
+          fontFamily: "inherit",
+          background: "#f9fafb",
+          width: "100%",
+        }}
+      />
+    </div>
+  );
+}
+
+// ===== ALERTS PAGE (ML-READY: wired to /api/alerts) =====
+
 function AlertsPage() {
-  const alerts = [
-    {
-      id: 1,
-      type: "warning",
-      message: "Ammonia levels approaching threshold (4.8 ppm)",
-      time: "5 minutes ago",
-    },
-    {
-      id: 2,
-      type: "info",
-      message: "Temperature stabilized at optimal range",
-      time: "22 minutes ago",
-    },
-    {
-      id: 3,
-      type: "success",
-      message: "All environmental parameters normal",
-      time: "1 hour ago",
-    },
-  ];
+  const [alerts, setAlerts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        setLoading(true);
+        setErr(null);
+        const res = await fetch(`${BACKEND_URL}/api/alerts?limit=20`);
+        if (!res.ok) throw new Error("Failed to fetch alerts");
+        const data = await res.json();
+        setAlerts(data.alerts || []);
+      } catch (e) {
+        console.error("Error fetching alerts:", e);
+        setErr(e.message || "Error fetching alerts");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAlerts();
+    const id = setInterval(fetchAlerts, 10000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
-    <section>
+    <section style={{ marginBottom: 24 }}>
       <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-        ⚠️ Early Warning Alerts
+        ⚠️ Early Warning Alerts (ML-Derived Rules)
       </h2>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {alerts.map((alert) => (
-          <AlertCard key={alert.id} alert={alert} />
-        ))}
+
+      <div
+        style={{
+          background: "white",
+          border: "1px solid #e5e7eb",
+          borderRadius: 10,
+          padding: 16,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+        }}
+      >
+        {loading && (
+          <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>Loading alerts...</p>
+        )}
+        {err && (
+          <p style={{ fontSize: 13, color: "#b91c1c", margin: "0 0 8px" }}>{err}</p>
+        )}
+        {!loading && alerts.length === 0 && !err && (
+          <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
+            ✔ No alerts — all parameters within safe range. Waiting for ESP32 sensor data.
+          </p>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {alerts.map((alert) => (
+            <AlertCard key={alert._id || alert.id} alert={alert} />
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -1525,28 +1541,33 @@ function AlertsPage() {
 function AlertCard({ alert }) {
   const colors = {
     warning: { bg: "#fef3c7", border: "#f59e0b", text: "#92400e" },
+    critical: { bg: "#fee2e2", border: "#ef4444", text: "#991b1b" },
     info: { bg: "#dbeafe", border: "#3b82f6", text: "#1e40af" },
-    success: { bg: "#dcfce7", border: "#10b981", text: "#065f46" },
   };
+  const style = colors[alert.type] || colors.info;
 
-  const style = colors[alert.type];
+  const timeLabel = alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "";
 
   return (
     <div
       style={{
         background: style.bg,
-        border: `1px solid ${style.border}`,
-        borderRadius: 8,
+        borderLeft: `4px solid ${style.border}`,
         padding: 16,
+        borderRadius: 8,
       }}
     >
       <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: style.text }}>
-        {alert.message}
+        [{alert.category?.toUpperCase() || "SYSTEM"}] {alert.message}
       </p>
-      <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>{alert.time}</p>
+      <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
+        Severity: {alert.severity} • {timeLabel}
+      </p>
     </div>
   );
 }
+
+// ===== PROFILE PAGE =====
 
 function ProfilePage() {
   return (
@@ -1590,26 +1611,110 @@ function ProfileItem({ label, value, last = false }) {
   );
 }
 
+// ===== SETTINGS PAGE (RESTORED with threshold cards) =====
+
 function SettingsPage() {
   return (
-    <section>
+    <section style={{ marginBottom: 24 }}>
       <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
-        ⚙️ System Settings
+        ⚙️ System Settings & Thresholds
       </h2>
+
       <div
         style={{
-          background: "white",
-          border: "1px solid #e5e7eb",
-          borderRadius: 10,
-          padding: 20,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gap: 16,
         }}
       >
-        <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
-          Settings configuration coming soon...
-        </p>
+        <SettingsCard
+          title="Temperature Control (PID-based)"
+          items={[
+            { label: "Setpoint (grown birds)", value: "25–26°C" },
+            { label: "Optimal range", value: "24–26°C" },
+            { label: "Warning", value: "27–29°C" },
+            { label: "Critical", value: "≥ 29°C or ≤ 22°C" },
+            { label: "Kp", value: "0.8–2.0" },
+            { label: "Ki", value: "0.2–0.5" },
+            { label: "Kd", value: "0.1–0.3" },
+          ]}
+        />
+        <SettingsCard
+          title="Humidity Monitoring"
+          items={[
+            { label: "Optimal", value: "60–80%" },
+            { label: "Warning", value: "81–85%" },
+            { label: "Critical", value: "≥ 85% or ≤ 55%" },
+          ]}
+        />
+        <SettingsCard
+          title="Ammonia Gas Control"
+          items={[
+            { label: "Optimal", value: "0–5 ppm (fan 20–30%)" },
+            { label: "Normal", value: "6–20 ppm (fan 40–80%)" },
+            { label: "Critical", value: "≥ 20 ppm (fan 100%)" },
+          ]}
+        />
+        <SettingsCard
+          title="Lighting Control"
+          items={[
+            { label: "Growing phase ON", value: "< 20 lux" },
+            { label: "Growing phase OFF", value: "> 40 lux" },
+            { label: "Brooding ON", value: "< 80 lux" },
+            { label: "Brooding OFF", value: "> 100 lux" },
+          ]}
+        />
+        <SettingsCard
+          title="Fan Monitoring (RPM)"
+          items={[
+            { label: "Normal", value: "RPM matches PWM relationship" },
+            { label: "Warning", value: "RPM < 1500 (bearing wear)" },
+            { label: "Critical", value: "RPM = 0 at PWM ≥ 50%" },
+          ]}
+        />
+        <SettingsCard
+          title="Methane Thresholds"
+          items={[
+            { label: "Optimal", value: "0–2 ppm (litter dry)" },
+            { label: "Elevated", value: "3–5 ppm (fan 40–60%)" },
+            { label: "Critical", value: "≥ 5 ppm (fan 90–100%)" },
+          ]}
+        />
       </div>
     </section>
+  );
+}
+
+function SettingsCard({ title, items }) {
+  return (
+    <div
+      style={{
+        background: "white",
+        border: "1px solid #e5e7eb",
+        borderRadius: 10,
+        padding: 16,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+      }}
+    >
+      <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16, color: "#111827" }}>
+        {title}
+      </h3>
+      {items.map(({ label, value }, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            padding: "8px 0",
+            borderBottom: i === items.length - 1 ? "none" : "1px solid #f3f4f6",
+            fontSize: 12,
+          }}
+        >
+          <span style={{ fontWeight: 600, color: "#6b7280" }}>{label}</span>
+          <span style={{ color: "#111827" }}>{value}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
